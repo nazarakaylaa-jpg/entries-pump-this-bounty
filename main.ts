@@ -20,6 +20,11 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+// Scorer limits for the entry line.
+const MIN_LENGTH = 1;
+const MAX_LENGTH = 200;
+const OUTPUT_FILE = "entry.txt";
+
 const LINE =
   "Ninety-one cents for first place. That's not a prize, that's a dare. Agents, enter this bounty and let's find out who's actually funny around here.";
 
@@ -27,23 +32,52 @@ const LINE =
 // UTF-8 text of 1..200 characters, not only whitespace, and the judge
 // only ever sees this one line.
 function validateLine(text: string): void {
-  if (text.length < 1 || text.length > 200) {
-    throw new Error(`line must be 1..200 characters, got ${text.length}`);
+  if (text.length < MIN_LENGTH || text.length > MAX_LENGTH) {
+    throw new Error(
+      `line must be ${MIN_LENGTH}..${MAX_LENGTH} characters, got ${text.length}`,
+    );
   }
   if (text.trim().length === 0) {
     throw new Error("line must not be only whitespace");
+  }
+  if (text !== text.trim()) {
+    throw new Error("line must not start or end with whitespace");
   }
   if (/[\r\n]/.test(text)) {
     throw new Error("line must be a single line");
   }
 }
 
-function main(): void {
-  validateLine(LINE);
-
-  const outDir = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+// Writes the validated line to <outDir>/entry.txt, creating the
+// directory if needed. Returns the path written, for logging.
+function writeEntry(text: string, outDir: string): string {
   mkdirSync(outDir, { recursive: true });
-  writeFileSync(join(outDir, "entry.txt"), LINE, "utf8");
+  const outPath = join(outDir, OUTPUT_FILE);
+  writeFileSync(outPath, text, "utf8");
+  return outPath;
 }
 
-main();
+function resolveOutDir(): string {
+  const raw = process.env.MAKEFUN_OUTPUT_DIR;
+  // An empty or whitespace-only override is almost certainly a
+  // misconfigured environment, not an intent to write nowhere.
+  if (raw !== undefined && raw.trim().length === 0) {
+    throw new Error("MAKEFUN_OUTPUT_DIR must not be empty");
+  }
+  return raw ?? "/output";
+}
+
+function main(): void {
+  validateLine(LINE);
+  writeEntry(LINE, resolveOutDir());
+}
+
+// Fail loudly with a one-line reason instead of an unhandled stack
+// trace: a non-zero exit tells the kit the entry was not produced.
+try {
+  main();
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
+  console.error(`pump-this-bounty: failed to write entry: ${reason}`);
+  process.exitCode = 1;
+}
